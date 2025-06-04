@@ -114,6 +114,7 @@
                         </div>
                         <div class="d-grid gap-2">
                             <button class="btn btn-warning" onclick="undo()">Undo</button>
+                            <button class="btn btn-danger" id="hardButton" onclick="toggleHard()">Mark as Hard</button>
                             <button class="btn btn-success" onclick="saveImage()">Save</button>
                         </div>
                     </div>
@@ -166,6 +167,8 @@
         let lastY = 0;
         let drawingImage = new Image();
         let confirmationModal;
+        let isHard = false;
+        const hardButton = document.getElementById('hardButton');
 
         // Load the original image
         originalImage.src = "{{ url_for('raw_image', filename=filename) }}";
@@ -408,6 +411,19 @@
             updateCanvasTransform();
         }
 
+        function toggleHard() {
+            isHard = !isHard;
+            if (isHard) {
+                hardButton.classList.add('active');
+                hardButton.style.backgroundColor = '#dc3545';
+                hardButton.style.color = 'white';
+            } else {
+                hardButton.classList.remove('active');
+                hardButton.style.backgroundColor = '';
+                hardButton.style.color = '';
+            }
+        }
+
         function saveImage() {
             const imageData = canvas.toDataURL('image/jpeg');
             fetch('/save', {
@@ -417,7 +433,8 @@
                 },
                 body: JSON.stringify({
                     filename: '{{ filename }}',
-                    image: imageData
+                    image: imageData,
+                    is_hard: isHard
                 })
             })
             .then(response => response.json())

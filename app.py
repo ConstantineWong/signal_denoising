@@ -195,7 +195,8 @@ def save_image():
     try:
         data = request.json
         filename = data['filename']
-        logger.debug(f"Saving image: {filename}")
+        is_hard = data.get('is_hard', False)  # Get the is_hard flag from request
+        logger.debug(f"Saving image: {filename}, is_hard: {is_hard}")
         
         image_data = data['image'].split(',')[1]
         
@@ -211,7 +212,14 @@ def save_image():
         logger.debug(f"Image saved to: {output_path}")
         
         # Update CSV status
-        update_csv_status(filename)
+        csv_path = get_latest_csv_path()
+        df = pd.read_csv(csv_path)
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        status = 'hard' if is_hard else 'completed'
+        df.loc[df['ecg'] == filename, 'Status'] = status
+        df.loc[df['ecg'] == filename, 'Time'] = current_time
+        df.to_csv(csv_path, index=False)
+        logger.debug(f"CSV status updated to: {status}")
         
         return jsonify({'success': True, 'message': 'Image saved successfully'})
     except Exception as e:
