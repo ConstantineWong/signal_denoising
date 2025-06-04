@@ -5,7 +5,7 @@ A web application for denoising ECG digital signals. This application enables us
 ## Features
 
 - **Upload CSV Files**: Upload CSV files containing ECG file names
-- **Prepare raw ECG images and ECGs in binary image format**: Upload your raw ECG images to 'raw_img' and your ECGs in binary image format to 'asset'
+- **Prepare raw ECG images and ECGs in binary image format**: Upload your raw ECG images to `raw_img` folder and your ECGs in binary image format to `asset` folder
 - **Denoise ECGs**: Denoise ECG digital signals in a convenient way
 - **Track Progress**: Automatically track denoising progress with timestamps
 
