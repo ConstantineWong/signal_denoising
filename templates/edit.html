@@ -416,15 +416,15 @@
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                    filename: "{{ filename }}",
+                    filename: '{{ filename }}',
                     image: imageData
                 })
             })
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    hasChanges = false;
                     alert('Image saved successfully!');
+                    hasChanges = false;
                 } else {
                     alert('Error saving image: ' + data.error);
                 }
@@ -446,9 +446,31 @@
         }
 
         function saveAndNavigate() {
-            saveImage();
-            confirmationModal.hide();
-            window.location.href = nextUrl;
+            const imageData = canvas.toDataURL('image/jpeg');
+            fetch('/save', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    filename: "{{ filename }}",
+                    image: imageData
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    hasChanges = false;
+                    confirmationModal.hide();
+                    window.location.href = nextUrl;
+                } else {
+                    alert('Error saving image: ' + data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error saving image');
+            });
         }
 
         function discardAndNavigate() {

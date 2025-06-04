@@ -18,12 +18,18 @@ app = Flask(__name__)
 UPLOAD_FOLDER = 'asset'
 OUTPUT_FOLDER = 'output'
 RAW_IMG_FOLDER = 'raw_img'
+UPLOADED_CSV_FOLDER = 'uploaded_csv'
+LATEST_CSV_RECORD = 'latest_csv.txt'
 ALLOWED_EXTENSIONS = {'csv'}
 RECORDS_PER_PAGE = 20
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['OUTPUT_FOLDER'] = OUTPUT_FOLDER
 app.config['RAW_IMG_FOLDER'] = RAW_IMG_FOLDER
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+os.makedirs(RAW_IMG_FOLDER, exist_ok=True)
+os.makedirs(UPLOADED_CSV_FOLDER, exist_ok=True)
 
 # Add template context processor
 @app.context_processor
@@ -33,10 +39,21 @@ def utility_processor():
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
+def get_latest_csv_path():
+    record_path = os.path.join(UPLOADED_CSV_FOLDER, LATEST_CSV_RECORD)
+    if os.path.exists(record_path):
+        with open(record_path, 'r') as f:
+            latest_csv = f.read().strip()
+        csv_path = os.path.join(UPLOADED_CSV_FOLDER, latest_csv)
+        if os.path.exists(csv_path):
+            return csv_path
+    # fallback
+    default_path = os.path.join(os.path.dirname(__file__), 'check_list.csv')
+    return default_path
+
 def get_image_list():
     try:
-        # Read the CSV file
-        csv_path = os.path.join(os.path.dirname(__file__), 'check_list.csv')
+        csv_path = get_latest_csv_path()
         logger.debug(f"Reading CSV from: {csv_path}")
         df = pd.read_csv(csv_path)
         return df['ecg'].tolist()
@@ -46,16 +63,12 @@ def get_image_list():
 
 def update_csv_status(filename):
     try:
-        csv_path = os.path.join(os.path.dirname(__file__), 'check_list.csv')
+        csv_path = get_latest_csv_path()
         logger.debug(f"Updating CSV status for file: {filename}")
         df = pd.read_csv(csv_path)
-        
-        # Update status and add timestamp
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        df.loc[df['ecg'] == filename, 'Status'] = 'FINISHED'
+        df.loc[df['ecg'] == filename, 'Status'] = 'completed'
         df.loc[df['ecg'] == filename, 'Time'] = current_time
-        
-        # Save back to CSV
         df.to_csv(csv_path, index=False)
         logger.debug("CSV status updated successfully")
     except Exception as e:
@@ -70,42 +83,29 @@ def list_page():
     try:
         page = request.args.get('page', 1, type=int)
         logger.debug(f"Current page requested: {page}")
-        
         if page < 1:
             page = 1
             logger.debug("Page number adjusted to 1")
-            
-        csv_path = os.path.join(os.path.dirname(__file__), 'check_list.csv')
+        csv_path = get_latest_csv_path()
         logger.debug(f"Reading CSV from: {csv_path}")
-        
         if not os.path.exists(csv_path):
             logger.error(f"CSV file not found at: {csv_path}")
             return render_template('list.html', 
                                  data=[],
                                  current_page=1,
                                  total_pages=1)
-        
         df = pd.read_csv(csv_path)
         logger.debug(f"Total records in CSV: {len(df)}")
-        
-        # Calculate pagination
         total_records = len(df)
         total_pages = max(1, math.ceil(total_records / RECORDS_PER_PAGE))
         logger.debug(f"Total pages calculated: {total_pages}")
-        
-        # Ensure page is within valid range
         page = min(page, total_pages)
         logger.debug(f"Final page number: {page}")
-        
-        # Calculate start and end indices
         start_idx = (page - 1) * RECORDS_PER_PAGE
         end_idx = min(start_idx + RECORDS_PER_PAGE, total_records)
         logger.debug(f"Data range: {start_idx} to {end_idx}")
-        
-        # Get records for current page
         current_page_data = df.iloc[start_idx:end_idx].to_dict('records')
         logger.debug(f"Records for current page: {len(current_page_data)}")
-        
         return render_template('list.html', 
                              data=current_page_data,
                              current_page=page,
@@ -123,31 +123,29 @@ def upload_file():
         if 'file' not in request.files:
             logger.error("No file part in request")
             return jsonify({'error': 'No file part'}), 400
-        
         file = request.files['file']
         if file.filename == '':
             logger.error("No selected file")
             return jsonify({'error': 'No selected file'}), 400
-        
         if file and allowed_file(file.filename):
             logger.debug(f"Processing file: {file.filename}")
-            df = pd.read_csv(file)
-            
-            # Add Time column if it doesn't exist
+            # 確保資料夾存在
+            os.makedirs(UPLOADED_CSV_FOLDER, exist_ok=True)
+            save_path = os.path.join(UPLOADED_CSV_FOLDER, file.filename)
+            file.save(save_path)
+            # 記錄最新文件名
+            with open(os.path.join(UPLOADED_CSV_FOLDER, LATEST_CSV_RECORD), 'w') as f:
+                f.write(file.filename)
+            df = pd.read_csv(save_path)
             if 'Time' not in df.columns:
                 df['Time'] = ''
                 logger.debug("Added Time column")
-            
-            # Save the CSV
-            csv_path = os.path.join(os.path.dirname(__file__), 'check_list.csv')
-            df.to_csv(csv_path, index=False)
+            df.to_csv(save_path, index=False)
             logger.debug("CSV saved successfully")
-            
             return render_template('list.html', 
                                  data=df.iloc[0:RECORDS_PER_PAGE].to_dict('records'),
                                  current_page=1,
                                  total_pages=max(1, math.ceil(len(df) / RECORDS_PER_PAGE)))
-        
         logger.error("Invalid file type")
         return jsonify({'error': 'Invalid file type'}), 400
     except Exception as e:
@@ -201,13 +199,14 @@ def save_image():
         
         image_data = data['image'].split(',')[1]
         
-        # Decode base64 image
-        image_bytes = base64.b64decode(image_data)
-        image = Image.open(BytesIO(image_bytes))
+        # 自動創建 output 目錄
+        os.makedirs(app.config['OUTPUT_FOLDER'], exist_ok=True)
         
         # Save to output folder
         output_filename = f"{os.path.splitext(filename)[0]}_bgrm.jpg"
         output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
+        image_bytes = base64.b64decode(image_data)
+        image = Image.open(BytesIO(image_bytes))
         image.save(output_path)
         logger.debug(f"Image saved to: {output_path}")
         
@@ -220,5 +219,4 @@ def save_image():
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
     app.run(debug=True) 
