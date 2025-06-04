@@ -158,14 +158,15 @@ def edit_image(filename):
         logger.debug(f"Editing image: {filename}")
         image_list = get_image_list()
         current_index = image_list.index(filename)
-        
         prev_image = image_list[current_index - 1] if current_index > 0 else None
         next_image = image_list[current_index + 1] if current_index < len(image_list) - 1 else None
-        
+        # 計算當前頁數
+        page = (current_index // RECORDS_PER_PAGE) + 1
         return render_template('edit.html', 
                              filename=filename,
                              prev_image=prev_image,
-                             next_image=next_image)
+                             next_image=next_image,
+                             page=page)
     except Exception as e:
         logger.error(f"Error in edit_image: {str(e)}", exc_info=True)
         return render_template('index.html')

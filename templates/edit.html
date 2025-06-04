@@ -10,9 +10,17 @@
         .canvas-container {
             position: relative;
             overflow: hidden;
+            max-width: 900px;
+            width: 100%;
             max-height: 80vh;
             margin-bottom: 20px;
             border: 1px solid #ccc;
+            margin-left: auto;
+            margin-right: auto;
+            background: #222;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
         .image-label {
             text-align: center;
@@ -29,8 +37,9 @@
             text-align: center;
         }
         #drawingCanvas {
-            position: absolute;
-            cursor: crosshair;
+            display: block;
+            margin: auto;
+            background: transparent;
         }
         .zoom-controls {
             margin: 10px 0;
@@ -52,6 +61,22 @@
             background-color: #007bff;
             color: white;
         }
+        .tools-panel {
+            margin-left: 40px;
+            min-width: 320px;
+            max-width: 380px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+            background: #fff;
+            border-radius: 8px;
+        }
+        @media (max-width: 991px) {
+            .tools-panel {
+                margin-left: 0;
+                margin-top: 24px;
+                width: 100%;
+                max-width: 100%;
+            }
+        }
     </style>
 </head>
 <body>
@@ -59,7 +84,7 @@
         <div class="row mb-3">
             <div class="col-12">
                 <div class="d-flex justify-content-between align-items-center">
-                    <a href="{{ url_for('list_page') }}" class="btn btn-secondary">Back to List</a>
+                    <a href="{{ url_for('list_page') }}?page={{ page }}" class="btn btn-secondary">Back to List</a>
                     <div class="btn-group">
                         {% if prev_image %}
                         <a href="#" onclick="confirmNavigation('{{ url_for('edit_image', filename=prev_image) }}')" class="btn btn-primary">Previous Image</a>
@@ -96,7 +121,7 @@
                 </div>
             </div>
             <div class="col-md-4">
-                <div class="card">
+                <div class="card tools-panel">
                     <div class="card-header">
                         <h4>Tools</h4>
                     </div>
@@ -155,7 +180,7 @@
         let currentColor = 'black';
         let brushSize = 10;
         let history = [];
-        let currentState = 0;
+        let currentState = -1;
         let scale = 1;
         let nextUrl = '';
         let hasChanges = false;
@@ -169,6 +194,13 @@
         let confirmationModal;
         let isHard = false;
         const hardButton = document.getElementById('hardButton');
+        // Zoom & Pan 相關
+        let baseWidth = 900, baseHeight = 0;
+        let minScale = 0.2, maxScale = 5;
+        let isPanning = false, panStartX = 0, panStartY = 0, panOriginX = 0, panOriginY = 0;
+        let drawingCache = null;
+        // 畫筆繪圖相關
+        let lastDrawX = 0, lastDrawY = 0;
 
         // Load the original image
         originalImage.src = "{{ url_for('raw_image', filename=filename) }}";
@@ -176,65 +208,88 @@
         // Load the editing image
         drawingImage.src = "{{ url_for('get_image', filename=filename) }}";
         drawingImage.onload = function() {
-            // Set canvas size to match image size
-            canvas.width = drawingImage.width;
-            canvas.height = drawingImage.height;
-            
-            // Set container size
-            container.style.width = drawingImage.width + 'px';
-            container.style.height = drawingImage.height + 'px';
-            
-            // Clear canvas and draw image
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(drawingImage, 0, 0);
-            
-            // Set initial scale to fit container
-            const containerWidth = container.clientWidth;
-            scale = containerWidth / drawingImage.width;
-            
-            // Apply initial transform
-            updateCanvasTransform();
+            // 計算初始縮放比例，讓圖片寬度適應baseWidth
+            scale = baseWidth / drawingImage.width;
+            baseHeight = Math.round(drawingImage.height * scale);
+            minScale = Math.min(0.2, scale);
+            maxScale = 5;
+            offsetX = 0;
+            offsetY = 0;
+            setCanvasSize(baseWidth, baseHeight);
+            redrawAll();
         };
+
+        function setCanvasSize(w, h) {
+            canvas.width = w;
+            canvas.height = h;
+            container.style.width = w + 'px';
+            container.style.height = h + 'px';
+        }
+
+        function redrawAll() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            // 計算繪製區域
+            const drawW = drawingImage.width * scale;
+            const drawH = drawingImage.height * scale;
+            ctx.save();
+            ctx.translate(offsetX, offsetY);
+            ctx.drawImage(drawingImage, 0, 0, drawingImage.width, drawingImage.height, 0, 0, drawW, drawH);
+            // 再畫快取內容
+            if (drawingCache) {
+                ctx.drawImage(drawingCache, 0, 0, drawingCache.width, drawingCache.height, 0, 0, drawW, drawH);
+            }
+            ctx.restore();
+        }
 
         function getCanvasCoordinates(e) {
             const rect = canvas.getBoundingClientRect();
-            const x = (e.clientX - rect.left) / scale;
-            const y = (e.clientY - rect.top) / scale;
+            const x = (e.clientX - rect.left - offsetX) / scale;
+            const y = (e.clientY - rect.top - offsetY) / scale;
             return { x, y };
         }
 
         canvas.addEventListener('mousedown', function(e) {
-            if (e.button === 0) { // Left click
+            if (e.button === 0) {
                 if (isDrawingEnabled) {
                     isDrawing = true;
                     const coords = getCanvasCoordinates(e);
-                    lastX = coords.x;
-                    lastY = coords.y;
+                    lastDrawX = coords.x;
+                    lastDrawY = coords.y;
                 } else {
-                    isDragging = true;
-                    lastX = e.clientX;
-                    lastY = e.clientY;
+                    isPanning = true;
+                    panStartX = e.clientX;
+                    panStartY = e.clientY;
+                    panOriginX = offsetX;
+                    panOriginY = offsetY;
                     container.style.cursor = 'grabbing';
+                    e.preventDefault();
                 }
-                e.preventDefault();
             }
         });
 
         canvas.addEventListener('mousemove', function(e) {
             if (isDrawing && isDrawingEnabled) {
                 const coords = getCanvasCoordinates(e);
-                
-                ctx.beginPath();
-                ctx.moveTo(lastX, lastY);
-                ctx.lineTo(coords.x, coords.y);
-                ctx.strokeStyle = currentColor;
-                ctx.lineWidth = brushSize;
-                ctx.lineCap = 'round';
-                ctx.stroke();
-                
+                // 在drawingCache上畫
+                if (!drawingCache) {
+                    drawingCache = document.createElement('canvas');
+                    drawingCache.width = drawingImage.width;
+                    drawingCache.height = drawingImage.height;
+                }
+                const cacheCtx = drawingCache.getContext('2d');
+                cacheCtx.save();
+                cacheCtx.strokeStyle = currentColor;
+                cacheCtx.lineWidth = brushSize / scale; // brush size隨縮放自適應
+                cacheCtx.lineCap = 'round';
+                cacheCtx.beginPath();
+                cacheCtx.moveTo(lastDrawX, lastDrawY);
+                cacheCtx.lineTo(coords.x, coords.y);
+                cacheCtx.stroke();
+                cacheCtx.restore();
+                lastDrawX = coords.x;
+                lastDrawY = coords.y;
                 hasChanges = true;
-                lastX = coords.x;
-                lastY = coords.y;
+                redrawAll();
             }
         });
 
@@ -243,8 +298,8 @@
                 isDrawing = false;
                 saveState();
             }
-            if (isDragging) {
-                isDragging = false;
+            if (isPanning) {
+                isPanning = false;
                 container.style.cursor = isDrawingEnabled ? 'crosshair' : 'grab';
             }
         });
@@ -254,79 +309,60 @@
                 isDrawing = false;
                 saveState();
             }
-            if (isDragging) {
-                isDragging = false;
+            if (isPanning) {
+                isPanning = false;
                 container.style.cursor = isDrawingEnabled ? 'crosshair' : 'grab';
             }
         });
 
         function updateCanvasTransform() {
-            canvas.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
+            // 不再用scale縮放canvas，這裡留空即可
         }
 
         // Add wheel event listener for zooming
         container.addEventListener('wheel', function(e) {
+            if (e.ctrlKey || e.metaKey) return;
             e.preventDefault();
-            
-            // Get mouse position relative to container
-            const rect = container.getBoundingClientRect();
-            const mouseX = e.clientX - rect.left;
-            const mouseY = e.clientY - rect.top;
-            
-            // Calculate zoom factor
-            const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
-            
-            // Calculate new scale
-            const newScale = scale * zoomFactor;
-            
-            // Limit zoom level
-            if (newScale >= 0.1 && newScale <= 10) {
-                // Calculate new offset to zoom towards mouse position
-                offsetX = mouseX - (mouseX - offsetX) * zoomFactor;
-                offsetY = mouseY - (mouseY - offsetY) * zoomFactor;
-                
-                scale = newScale;
-                updateCanvasTransform();
+            const mouseX = e.clientX - canvas.getBoundingClientRect().left;
+            const mouseY = e.clientY - canvas.getBoundingClientRect().top;
+            const prevScale = scale;
+            if (e.deltaY < 0) {
+                scale *= 1.2;
+                if (scale > maxScale) scale = maxScale;
+            } else {
+                scale /= 1.2;
+                if (scale < minScale) scale = minScale;
             }
+            // 以鼠標為中心縮放
+            offsetX -= (mouseX - offsetX) * (scale / prevScale - 1);
+            offsetY -= (mouseY - offsetY) * (scale / prevScale - 1);
+            redrawAll();
         });
 
         // Add mouse events for panning
-        container.addEventListener('mousedown', function(e) {
-            if (e.button === 0 && !isDrawingEnabled) {
-                isDragging = true;
-                lastX = e.clientX;
-                lastY = e.clientY;
+        canvas.addEventListener('mousedown', function(e) {
+            if (!isDrawingEnabled && e.button === 0) {
+                isPanning = true;
+                panStartX = e.clientX;
+                panStartY = e.clientY;
+                panOriginX = offsetX;
+                panOriginY = offsetY;
                 container.style.cursor = 'grabbing';
                 e.preventDefault();
             }
         });
 
-        container.addEventListener('mousemove', function(e) {
-            if (isDragging) {
-                const deltaX = e.clientX - lastX;
-                const deltaY = e.clientY - lastY;
-                
-                offsetX += deltaX;
-                offsetY += deltaY;
-                
-                lastX = e.clientX;
-                lastY = e.clientY;
-                
-                updateCanvasTransform();
-                e.preventDefault();
+        window.addEventListener('mousemove', function(e) {
+            if (isPanning) {
+                offsetX = panOriginX + (e.clientX - panStartX);
+                offsetY = panOriginY + (e.clientY - panStartY);
+                redrawAll();
             }
         });
 
-        container.addEventListener('mouseup', function(e) {
-            if (isDragging) {
-                isDragging = false;
-                container.style.cursor = isDrawingEnabled ? 'crosshair' : 'grab';
-            }
-        });
-
-        container.addEventListener('mouseleave', function(e) {
-            if (isDragging) {
-                isDragging = false;
+        window.addEventListener('mouseup', function(e) {
+            if (isPanning) {
+                isPanning = false;
                 container.style.cursor = isDrawingEnabled ? 'crosshair' : 'grab';
             }
         });
@@ -345,27 +381,52 @@
 
         function clearCanvas() {
             if (confirm('Are you sure you want to clear all drawings?')) {
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-                ctx.drawImage(drawingImage, 0, 0);
+                drawingCache = null;
                 hasChanges = true;
+                redrawAll();
             }
         }
 
         function saveState() {
             currentState++;
             history = history.slice(0, currentState);
-            history.push(canvas.toDataURL());
+            // 保存drawingCache內容和當前視角/縮放
+            const cacheUrl = drawingCache ? drawingCache.toDataURL() : null;
+            history.push({
+                cacheUrl: cacheUrl,
+                scale: scale,
+                offsetX: offsetX,
+                offsetY: offsetY
+            });
         }
 
         function undo() {
             if (currentState > 0) {
                 currentState--;
-                const img = new Image();
-                img.src = history[currentState];
-                img.onload = function() {
-                    ctx.clearRect(0, 0, canvas.width, canvas.height);
-                    ctx.drawImage(img, 0, 0);
-                };
+                const state = history[currentState];
+                // 還原繪圖內容
+                if (state.cacheUrl) {
+                    drawingCache = document.createElement('canvas');
+                    drawingCache.width = drawingImage.width;
+                    drawingCache.height = drawingImage.height;
+                    const img = new Image();
+                    img.src = state.cacheUrl;
+                    img.onload = function() {
+                        drawingCache.getContext('2d').clearRect(0, 0, drawingCache.width, drawingCache.height);
+                        drawingCache.getContext('2d').drawImage(img, 0, 0);
+                        // 還原縮放和視角
+                        scale = state.scale;
+                        offsetX = state.offsetX;
+                        offsetY = state.offsetY;
+                        redrawAll();
+                    };
+                } else {
+                    drawingCache = null;
+                    scale = state.scale;
+                    offsetX = state.offsetX;
+                    offsetY = state.offsetY;
+                    redrawAll();
+                }
             }
         }
 
@@ -378,37 +439,33 @@
         });
 
         function zoomIn() {
-            const rect = container.getBoundingClientRect();
-            const centerX = rect.width / 2;
-            const centerY = rect.height / 2;
-            
-            const zoomFactor = 1.2;
-            offsetX = centerX - (centerX - offsetX) * zoomFactor;
-            offsetY = centerY - (centerY - offsetY) * zoomFactor;
-            
-            scale *= zoomFactor;
-            updateCanvasTransform();
+            if (scale < maxScale) {
+                const prevScale = scale;
+                scale *= 1.2;
+                if (scale > maxScale) scale = maxScale;
+                // 以中心點縮放
+                offsetX -= (canvas.width / 2 - offsetX) * (scale / prevScale - 1);
+                offsetY -= (canvas.height / 2 - offsetY) * (scale / prevScale - 1);
+                redrawAll();
+            }
         }
 
         function zoomOut() {
-            const rect = container.getBoundingClientRect();
-            const centerX = rect.width / 2;
-            const centerY = rect.height / 2;
-            
-            const zoomFactor = 0.8;
-            offsetX = centerX - (centerX - offsetX) * zoomFactor;
-            offsetY = centerY - (centerY - offsetY) * zoomFactor;
-            
-            scale *= zoomFactor;
-            updateCanvasTransform();
+            if (scale > minScale) {
+                const prevScale = scale;
+                scale /= 1.2;
+                if (scale < minScale) scale = minScale;
+                offsetX -= (canvas.width / 2 - offsetX) * (scale / prevScale - 1);
+                offsetY -= (canvas.height / 2 - offsetY) * (scale / prevScale - 1);
+                redrawAll();
+            }
         }
 
         function resetZoom() {
-            const containerWidth = container.clientWidth;
-            scale = containerWidth / drawingImage.width;
+            scale = baseWidth / drawingImage.width;
             offsetX = 0;
             offsetY = 0;
-            updateCanvasTransform();
+            redrawAll();
         }
 
         function toggleHard() {

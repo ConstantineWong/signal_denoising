@@ -81,18 +81,44 @@
         <!-- Pagination -->
         <nav aria-label="Page navigation" class="mt-4">
             <ul class="pagination justify-content-center">
+                {% set page_window = 2 %}
                 {% if current_page > 1 %}
                 <li class="page-item">
                     <a class="page-link" href="{{ url_for('list_page', page=current_page-1) }}">Previous</a>
                 </li>
                 {% endif %}
-                
-                {% for page in range(1, total_pages + 1) %}
-                <li class="page-item {% if page == current_page %}active{% endif %}">
-                    <a class="page-link" href="{{ url_for('list_page', page=page) }}">{{ page }}</a>
+
+                {# Always show first page #}
+                <li class="page-item {% if 1 == current_page %}active{% endif %}">
+                    <a class="page-link" href="{{ url_for('list_page', page=1) }}">1</a>
                 </li>
+
+                {# Show ... if needed #}
+                {% if current_page - page_window > 2 %}
+                <li class="page-item disabled"><span class="page-link">...</span></li>
+                {% endif %}
+
+                {# Show pages around current page #}
+                {% for page in range(max(2, current_page - page_window), min(total_pages, current_page + page_window) + 1) %}
+                    {% if page != 1 and page != total_pages %}
+                    <li class="page-item {% if page == current_page %}active{% endif %}">
+                        <a class="page-link" href="{{ url_for('list_page', page=page) }}">{{ page }}</a>
+                    </li>
+                    {% endif %}
                 {% endfor %}
-                
+
+                {# Show ... if needed #}
+                {% if current_page + page_window < total_pages - 1 %}
+                <li class="page-item disabled"><span class="page-link">...</span></li>
+                {% endif %}
+
+                {# Always show last page if more than 1 #}
+                {% if total_pages > 1 %}
+                <li class="page-item {% if total_pages == current_page %}active{% endif %}">
+                    <a class="page-link" href="{{ url_for('list_page', page=total_pages) }}">{{ total_pages }}</a>
+                </li>
+                {% endif %}
+
                 {% if current_page < total_pages %}
                 <li class="page-item">
                     <a class="page-link" href="{{ url_for('list_page', page=current_page+1) }}">Next</a>
@@ -100,6 +126,21 @@
                 {% endif %}
             </ul>
         </nav>
+        <!-- Go to page input -->
+        <div class="d-flex justify-content-center align-items-center mt-2">
+            <input type="number" id="gotoPageInput" class="form-control" style="width: 100px; display: inline-block;" min="1" max="{{ total_pages }}" placeholder="Page #">
+            <button class="btn btn-outline-primary ms-2" onclick="gotoPage()">Go</button>
+        </div>
+        <script>
+        function gotoPage() {
+            var page = parseInt(document.getElementById('gotoPageInput').value);
+            if (!isNaN(page) && page >= 1 && page <= {{ total_pages }}) {
+                window.location.href = "{{ url_for('list_page') }}?page=" + page;
+            } else {
+                alert('Please enter a valid page number between 1 and {{ total_pages }}');
+            }
+        }
+        </script>
     </div>
 
     <!-- Upload Modal -->
