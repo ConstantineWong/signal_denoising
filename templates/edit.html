@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Edit ECG Image</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .canvas-container {
+            position: relative;
+            overflow: hidden;
+            max-height: 80vh;
+            margin-bottom: 20px;
+            border: 1px solid #ccc;
+        }
+        .image-label {
+            text-align: center;
+            margin-bottom: 10px;
+            font-weight: bold;
+            font-size: 1.2em;
+        }
+        .image-section {
+            margin-bottom: 30px;
+        }
+        .image-container {
+            position: relative;
+            margin: 0 auto;
+            text-align: center;
+        }
+        #drawingCanvas {
+            position: absolute;
+            cursor: crosshair;
+        }
+        .zoom-controls {
+            margin: 10px 0;
+            text-align: center;
+        }
+        .zoom-controls button {
+            margin: 0 5px;
+            padding: 5px 15px;
+        }
+        .drawing-controls {
+            margin: 10px 0;
+            text-align: center;
+        }
+        .drawing-controls button {
+            margin: 0 5px;
+            padding: 5px 15px;
+        }
+        .drawing-controls .active {
+            background-color: #007bff;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-5">
+        <div class="row mb-3">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center">
+                    <a href="{{ url_for('list_page') }}" class="btn btn-secondary">Back to List</a>
+                    <div class="btn-group">
+                        {% if prev_image %}
+                        <a href="#" onclick="confirmNavigation('{{ url_for('edit_image', filename=prev_image) }}')" class="btn btn-primary">Previous Image</a>
+                        {% endif %}
+                        {% if next_image %}
+                        <a href="#" onclick="confirmNavigation('{{ url_for('edit_image', filename=next_image) }}')" class="btn btn-primary">Next Image</a>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="row">
+            <div class="col-md-8">
+                <div class="image-section">
+                    <div class="image-label">Editing Image</div>
+                    <div class="canvas-container" id="canvasContainer">
+                        <canvas id="drawingCanvas"></canvas>
+                    </div>
+                    <div class="zoom-controls">
+                        <button class="btn btn-outline-primary" onclick="zoomIn()">Zoom In (+)</button>
+                        <button class="btn btn-outline-primary" onclick="zoomOut()">Zoom Out (-)</button>
+                        <button class="btn btn-outline-secondary" onclick="resetZoom()">Reset Zoom</button>
+                    </div>
+                    <div class="drawing-controls">
+                        <button class="btn btn-outline-primary" id="drawButton" onclick="toggleDrawing()">Draw</button>
+                        <button class="btn btn-outline-danger" onclick="clearCanvas()">Clear All</button>
+                    </div>
+                </div>
+                <div class="image-section">
+                    <div class="image-label">Original Image</div>
+                    <div class="image-container">
+                        <img id="originalImage" class="border" style="max-width: 100%; height: auto;">
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h4>Tools</h4>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label">Brush Color</label>
+                            <div class="btn-group w-100">
+                                <button class="btn btn-dark" onclick="setColor('black')">Black</button>
+                                <button class="btn btn-light" onclick="setColor('white')">White</button>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Brush Size</label>
+                            <input type="range" class="form-range" id="brushSize" min="1" max="50" value="10">
+                        </div>
+                        <div class="d-grid gap-2">
+                            <button class="btn btn-warning" onclick="undo()">Undo</button>
+                            <button class="btn btn-success" onclick="saveImage()">Save</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirmation Modal -->
+    <div class="modal fade" id="confirmationModal" tabindex="-1" aria-labelledby="confirmationModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="confirmationModalLabel">Unsaved Changes</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p>You have unsaved changes. Would you like to save before leaving?</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" onclick="saveAndNavigate()">Save and Continue</button>
+                    <button type="button" class="btn btn-danger" onclick="discardAndNavigate()">Discard Changes</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+        const canvas = document.getElementById('drawingCanvas');
+        const ctx = canvas.getContext('2d');
+        const container = document.getElementById('canvasContainer');
+        const originalImage = document.getElementById('originalImage');
+        let isDrawing = false;
+        let currentColor = 'black';
+        let brushSize = 10;
+        let history = [];
+        let currentState = 0;
+        let scale = 1;
+        let nextUrl = '';
+        let hasChanges = false;
+        let isDrawingEnabled = false;
+        let offsetX = 0;
+        let offsetY = 0;
+        let isDragging = false;
+        let lastX = 0;
+        let lastY = 0;
+        let drawingImage = new Image();
+        let confirmationModal;
+
+        // Load the original image
+        originalImage.src = "{{ url_for('raw_image', filename=filename) }}";
+
+        // Load the editing image
+        drawingImage.src = "{{ url_for('get_image', filename=filename) }}";
+        drawingImage.onload = function() {
+            // Set canvas size to match image size
+            canvas.width = drawingImage.width;
+            canvas.height = drawingImage.height;
+            
+            // Set container size
+            container.style.width = drawingImage.width + 'px';
+            container.style.height = drawingImage.height + 'px';
+            
+            // Clear canvas and draw image
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(drawingImage, 0, 0);
+            
+            // Set initial scale to fit container
+            const containerWidth = container.clientWidth;
+            scale = containerWidth / drawingImage.width;
+            
+            // Apply initial transform
+            updateCanvasTransform();
+        };
+
+        function getCanvasCoordinates(e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) / scale;
+            const y = (e.clientY - rect.top) / scale;
+            return { x, y };
+        }
+
+        canvas.addEventListener('mousedown', function(e) {
+            if (e.button === 0) { // Left click
+                if (isDrawingEnabled) {
+                    isDrawing = true;
+                    const coords = getCanvasCoordinates(e);
+                    lastX = coords.x;
+                    lastY = coords.y;
+                } else {
+                    isDragging = true;
+                    lastX = e.clientX;
+                    lastY = e.clientY;
+                    container.style.cursor = 'grabbing';
+                }
+                e.preventDefault();
+            }
+        });
+
+        canvas.addEventListener('mousemove', function(e) {
+            if (isDrawing && isDrawingEnabled) {
+                const coords = getCanvasCoordinates(e);
+                
+                ctx.beginPath();
+                ctx.moveTo(lastX, lastY);
+                ctx.lineTo(coords.x, coords.y);
+                ctx.strokeStyle = currentColor;
+                ctx.lineWidth = brushSize;
+                ctx.lineCap = 'round';
+                ctx.stroke();
+                
+                hasChanges = true;
+                lastX = coords.x;
+                lastY = coords.y;
+            }
+        });
+
+        canvas.addEventListener('mouseup', function(e) {
+            if (isDrawing) {
+                isDrawing = false;
+                saveState();
+            }
+            if (isDragging) {
+                isDragging = false;
+                container.style.cursor = isDrawingEnabled ? 'crosshair' : 'grab';
+            }
+        });
+
+        canvas.addEventListener('mouseleave', function(e) {
+            if (isDrawing) {
+                isDrawing = false;
+                saveState();
+            }
+            if (isDragging) {
+                isDragging = false;
+                container.style.cursor = isDrawingEnabled ? 'crosshair' : 'grab';
+            }
+        });
+
+        function updateCanvasTransform() {
+            canvas.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
+        }
+
+        // Add wheel event listener for zooming
+        container.addEventListener('wheel', function(e) {
+            e.preventDefault();
+            
+            // Get mouse position relative to container
+            const rect = container.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            // Calculate zoom factor
+            const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+            
+            // Calculate new scale
+            const newScale = scale * zoomFactor;
+            
+            // Limit zoom level
+            if (newScale >= 0.1 && newScale <= 10) {
+                // Calculate new offset to zoom towards mouse position
+                offsetX = mouseX - (mouseX - offsetX) * zoomFactor;
+                offsetY = mouseY - (mouseY - offsetY) * zoomFactor;
+                
+                scale = newScale;
+                updateCanvasTransform();
+            }
+        });
+
+        // Add mouse events for panning
+        container.addEventListener('mousedown', function(e) {
+            if (e.button === 0 && !isDrawingEnabled) {
+                isDragging = true;
+                lastX = e.clientX;
+                lastY = e.clientY;
+                container.style.cursor = 'grabbing';
+                e.preventDefault();
+            }
+        });
+
+        container.addEventListener('mousemove', function(e) {
+            if (isDragging) {
+                const deltaX = e.clientX - lastX;
+                const deltaY = e.clientY - lastY;
+                
+                offsetX += deltaX;
+                offsetY += deltaY;
+                
+                lastX = e.clientX;
+                lastY = e.clientY;
+                
+                updateCanvasTransform();
+                e.preventDefault();
+            }
+        });
+
+        container.addEventListener('mouseup', function(e) {
+            if (isDragging) {
+                isDragging = false;
+                container.style.cursor = isDrawingEnabled ? 'crosshair' : 'grab';
+            }
+        });
+
+        container.addEventListener('mouseleave', function(e) {
+            if (isDragging) {
+                isDragging = false;
+                container.style.cursor = isDrawingEnabled ? 'crosshair' : 'grab';
+            }
+        });
+
+        function toggleDrawing() {
+            isDrawingEnabled = !isDrawingEnabled;
+            const drawButton = document.getElementById('drawButton');
+            if (isDrawingEnabled) {
+                drawButton.classList.add('active');
+                container.style.cursor = 'crosshair';
+            } else {
+                drawButton.classList.remove('active');
+                container.style.cursor = 'grab';
+            }
+        }
+
+        function clearCanvas() {
+            if (confirm('Are you sure you want to clear all drawings?')) {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(drawingImage, 0, 0);
+                hasChanges = true;
+            }
+        }
+
+        function saveState() {
+            currentState++;
+            history = history.slice(0, currentState);
+            history.push(canvas.toDataURL());
+        }
+
+        function undo() {
+            if (currentState > 0) {
+                currentState--;
+                const img = new Image();
+                img.src = history[currentState];
+                img.onload = function() {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(img, 0, 0);
+                };
+            }
+        }
+
+        function setColor(color) {
+            currentColor = color;
+        }
+
+        document.getElementById('brushSize').addEventListener('input', function(e) {
+            brushSize = e.target.value;
+        });
+
+        function zoomIn() {
+            const rect = container.getBoundingClientRect();
+            const centerX = rect.width / 2;
+            const centerY = rect.height / 2;
+            
+            const zoomFactor = 1.2;
+            offsetX = centerX - (centerX - offsetX) * zoomFactor;
+            offsetY = centerY - (centerY - offsetY) * zoomFactor;
+            
+            scale *= zoomFactor;
+            updateCanvasTransform();
+        }
+
+        function zoomOut() {
+            const rect = container.getBoundingClientRect();
+            const centerX = rect.width / 2;
+            const centerY = rect.height / 2;
+            
+            const zoomFactor = 0.8;
+            offsetX = centerX - (centerX - offsetX) * zoomFactor;
+            offsetY = centerY - (centerY - offsetY) * zoomFactor;
+            
+            scale *= zoomFactor;
+            updateCanvasTransform();
+        }
+
+        function resetZoom() {
+            const containerWidth = container.clientWidth;
+            scale = containerWidth / drawingImage.width;
+            offsetX = 0;
+            offsetY = 0;
+            updateCanvasTransform();
+        }
+
+        function saveImage() {
+            const imageData = canvas.toDataURL('image/jpeg');
+            fetch('/save', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    filename: "{{ filename }}",
+                    image: imageData
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    hasChanges = false;
+                    alert('Image saved successfully!');
+                } else {
+                    alert('Error saving image: ' + data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error saving image');
+            });
+        }
+
+        function confirmNavigation(url) {
+            if (hasChanges) {
+                nextUrl = url;
+                confirmationModal = new bootstrap.Modal(document.getElementById('confirmationModal'));
+                confirmationModal.show();
+            } else {
+                window.location.href = url;
+            }
+        }
+
+        function saveAndNavigate() {
+            saveImage();
+            confirmationModal.hide();
+            window.location.href = nextUrl;
+        }
+
+        function discardAndNavigate() {
+            hasChanges = false;
+            confirmationModal.hide();
+            window.location.href = nextUrl;
+        }
+    </script>
+</body>
+</html> 
