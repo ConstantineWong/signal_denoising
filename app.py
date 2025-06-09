@@ -205,7 +205,7 @@ def save_image():
         os.makedirs(app.config['OUTPUT_FOLDER'], exist_ok=True)
         
         # Save to output folder
-        output_filename = f"{os.path.splitext(filename)[0]}_bgrm.jpg"
+        output_filename = f"{os.path.splitext(filename)[0]}_bgrm.png"
         output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
         image_bytes = base64.b64decode(image_data)
         image = Image.open(BytesIO(image_bytes))
